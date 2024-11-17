@@ -2,7 +2,7 @@
 ![license](https://img.shields.io/github/license/Vertyco/Vrt-Cogs?style=for-the-badge)
 ![Red-DiscordBot](https://img.shields.io/badge/Red%20DiscordBot-V3.5-red?style=for-the-badge)
 
-# Vert's Cog Templates
+# Cog Templates for [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot)
 
 This repository contains templates that I use for my own cogs. Feel free to use them as you wish 🙂
 
