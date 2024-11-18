@@ -1,7 +1,7 @@
 from abc import ABC, ABCMeta, abstractmethod
 
 from discord.ext.commands.cog import CogMeta
-from piccolo.engine.postgres import PostgresEngine
+from piccolo.engine.sqlite import SQLiteEngine
 from redbot.core.bot import Red
 
 
@@ -14,7 +14,7 @@ class MixinMeta(ABC):
 
     def __init__(self, *_args):
         self.bot: Red
-        self.db: PostgresEngine | None
+        self.db: SQLiteEngine | None
 
     @abstractmethod
     async def initialize(self) -> None:
