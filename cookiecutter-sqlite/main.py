@@ -4,7 +4,7 @@ import logging
 import typing as t
 from io import BytesIO
 
-from piccolo.engine.postgres import PostgresEngine
+from piccolo.engine.sqlite import SQLiteEngine
 from redbot.core import commands
 from redbot.core.bot import Red
 
@@ -34,19 +34,15 @@ class CookieCutter(
     def __init__(self, bot: Red):
         super().__init__()
         self.bot: Red = bot
-        self.db: PostgresEngine = None
+        self.db: SQLiteEngine = None
 
     def format_help_for_context(self, ctx: commands.Context):
         helpcmd = super().format_help_for_context(ctx)
         txt = "Version: {}\nAuthor: {}".format(self.__version__, self.__author__)
         return f"{helpcmd}\n\n{txt}"
 
-    async def red_get_data_for_user(
-        self, *, user_id: int
-    ) -> t.MutableMapping[str, BytesIO]:
-        users = await Player.select(Player.all_columns()).where(
-            Player.author_id == user_id
-        )
+    async def red_get_data_for_user(self, *, user_id: int) -> t.MutableMapping[str, BytesIO]:
+        users = await Player.select(Player.all_columns()).where(Player.author_id == user_id)
         return {"data.json": BytesIO(json.dumps(users).encode())}
 
     async def red_delete_data_for_user(self, *, requester: RequestType, user_id: int):
@@ -59,27 +55,10 @@ class CookieCutter(
         asyncio.create_task(self.initialize())
 
     async def cog_unload(self) -> None:
-        if self.db:
-            self.db.pool.terminate()
-            log.info("Database connection terminated")
+        pass
 
     async def initialize(self) -> None:
         await self.bot.wait_until_red_ready()
-        config = await self.bot.get_shared_api_tokens("postgres")
-        if not config:
-            log.warning("Postgres credentials not set!")
-            return
-        if self.db:
-            log.info("Closing existing database connection")
-            await self.db.close_connection_pool()
         log.info("Registering database connection")
-        self.db = await engine.register_cog(self, config, TABLES, trace=True)
+        self.db = await engine.register_cog(self, TABLES, trace=True)
         log.info("Database connection established")
-        ...  # More initialization code here
-        log.info("Cog initialized")
-
-    @commands.Cog.listener()
-    async def on_red_api_tokens_update(self, service_name: str, api_tokens: dict):
-        if service_name != "postgres":
-            return
-        await self.initialize()
