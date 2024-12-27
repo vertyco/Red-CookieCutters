@@ -1,4 +1,4 @@
-# Adcanced Cookiecutter
+# Advanced Cookiecutter
 
 This cog template is a more advanced version of the simple cog template. It includes a more robust structure for larger cogs, and utilizes Pydantic to objectify config data so that youre not messing around with dictionaries all the time.
 

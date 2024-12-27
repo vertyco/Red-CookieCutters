@@ -2,8 +2,9 @@ import asyncio
 import logging
 import typing as t
 
-from redbot.core import commands
+from redbot.core import Config, commands
 from redbot.core.bot import Red
+from redbot.core.data_manager import cog_data_path
 
 from .abc import CompositeMetaClass
 from .commands import Commands
@@ -49,8 +50,7 @@ class CookieCutter(
 
     async def initialize(self) -> None:
         await self.bot.wait_until_red_ready()
-        data = await self.config.db()
-        self.db = await asyncio.to_thread(DB.model_validate, data)
+        self.db = await asyncio.to_thread(DB.from_file, cog_data_path(self))
         log.info("Config loaded")
 
     def save(self) -> None:
@@ -59,8 +59,7 @@ class CookieCutter(
                 return
             try:
                 self.saving = True
-                dump = await asyncio.to_thread(self.db.model_dump, mode="json")
-                await self.config.db.set(dump)
+                await asyncio.to_thread(self.db.to_file, cog_data_path(self))
             except Exception as e:
                 log.exception("Failed to save config", exc_info=e)
             finally:

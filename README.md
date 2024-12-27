@@ -10,6 +10,7 @@ _These templates are designed to support Python 3.10 and above._
 
 - [cookiecutter-simple](cookiecutter-simple/README.md): Simple as it gets, just barebones requirements.
 - [cookiecutter-pydantic](cookiecutter-pydantic/README.md): Fully structured cog schema that uses Pydantic for easier config management.
+- [cookiecutter-pydantic-no-config](cookiecutter-pydantic-no-config/README.md): Same as pydantic version but without Red's config drivers.
 - [cookiecutter-postgres](cookiecutter-postgres/README.md): Similar to the pydantic version but with full postgres support.
 - [cookiecutter-sqlite](cookiecutter-sqlite/README.md): Similar to the pydantic version but with full sqlite support.
 
