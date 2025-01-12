@@ -47,7 +47,9 @@ class CookieCutter(
 
     async def initialize(self) -> None:
         await self.bot.wait_until_red_ready()
-        self.db = await asyncio.to_thread(DB.from_file, cog_data_path(self))
+        self.db = await asyncio.to_thread(
+            DB.from_file, cog_data_path(self) / "config.json"
+        )
         log.info("Config loaded")
         self._initializing = False
 
@@ -57,7 +59,9 @@ class CookieCutter(
                 return
             try:
                 self._saving = True
-                await asyncio.to_thread(self.db.to_file, cog_data_path(self))
+                await asyncio.to_thread(
+                    self.db.to_file, cog_data_path(self) / "config.json"
+                )
             except Exception as e:
                 log.exception("Failed to save config", exc_info=e)
             finally:
