@@ -1,7 +1,11 @@
 from ..abc import CompositeMetaClass
+from .messages import MessageListeners
 
 
-class Listeners(metaclass=CompositeMetaClass):
+class Listeners(
+    MessageListeners,
+    metaclass=CompositeMetaClass,
+):
     """
     Subclass all listeners in this directory so you can import this single Listeners class in your cog's class constructor.
 

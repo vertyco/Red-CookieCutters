@@ -152,7 +152,7 @@ class Base(BaseModel):
         return cls.parse_file(path)
 
     def to_file(self, path: Path) -> None:
-        dump = self.model_dump_json()
+        dump = self.model_dump_json(exclude_defaults=True)
         # We want to write the file as safely as possible
         # https://github.com/Cog-Creators/Red-DiscordBot/blob/V3/develop/redbot/core/_drivers/json.py#L224
         tmp_path = path.parent / f"{path.stem}-{uuid4().fields[0]}.tmp"

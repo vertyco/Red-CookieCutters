@@ -1,8 +1,7 @@
 import asyncio
 import logging
-import typing as t
 
-from redbot.core import Config, commands
+from redbot.core import commands
 from redbot.core.bot import Red
 from redbot.core.data_manager import cog_data_path
 
@@ -13,15 +12,10 @@ from .listeners import Listeners
 from .tasks import TaskLoops
 
 log = logging.getLogger("red.cookiecutter")
-RequestType = t.Literal["discord_deleted_user", "owner", "user", "user_strict"]
 
 
 class CookieCutter(
-    Commands,
-    Listeners,
-    TaskLoops,
-    commands.Cog,
-    metaclass=CompositeMetaClass,
+    Commands, Listeners, TaskLoops, commands.Cog, metaclass=CompositeMetaClass
 ):
     """Description"""
 
@@ -32,7 +26,10 @@ class CookieCutter(
         super().__init__()
         self.bot: Red = bot
         self.db: DB = DB()
-        self.saving = False
+
+        # States
+        self._saving = False
+        self._initializing = True
 
     def format_help_for_context(self, ctx: commands.Context):
         helpcmd = super().format_help_for_context(ctx)
@@ -52,17 +49,18 @@ class CookieCutter(
         await self.bot.wait_until_red_ready()
         self.db = await asyncio.to_thread(DB.from_file, cog_data_path(self))
         log.info("Config loaded")
+        self._initializing = False
 
     def save(self) -> None:
         async def _save():
-            if self.saving:
+            if self._saving or self._initializing:
                 return
             try:
-                self.saving = True
+                self._saving = True
                 await asyncio.to_thread(self.db.to_file, cog_data_path(self))
             except Exception as e:
                 log.exception("Failed to save config", exc_info=e)
             finally:
-                self.saving = False
+                self._saving = False
 
         asyncio.create_task(_save())

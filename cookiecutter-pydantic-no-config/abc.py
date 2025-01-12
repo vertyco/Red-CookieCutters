@@ -19,4 +19,4 @@ class MixinMeta(ABC):
 
     @abstractmethod
     def save(self) -> None:
-        pass
+        raise NotImplementedError
