@@ -4,34 +4,42 @@ import logging
 import os
 import subprocess
 import sys
+import typing as t
 from pathlib import Path
 
 import asyncpg
-from discord.ext.commands import Cog
+from discord.ext import commands
 from piccolo.engine.postgres import PostgresEngine
 from piccolo.table import Table
+from redbot.core.data_manager import cog_data_path
 
 from .errors import ConnectionTimeoutError, DirectoryError, UNCPathError
 
-log = logging.getLogger("red.cookiecutter")
-piccolo_path = Path(sys.executable).parent / "piccolo"
+log = logging.getLogger("red.your_cog_name.cookiecutter.engine")
 
 
 async def register_cog(
-    cog_instance: Cog | Path,
-    config: dict,
+    cog_instance: commands.Cog | Path,
     tables: list[type[Table]],
-    pool_size: int = 20,
+    config: dict,
+    *,
     trace: bool = False,
-):
+    max_size: int = 20,
+    min_size: int = 1,
+    skip_migrations: bool = False,
+    extensions: list[str] = ("uuid-ossp",),
+) -> PostgresEngine:
     """Registers a Discord cog with a database connection and runs migrations.
 
     Args:
-        cog_instance (Cog | Path): The instance/path of the cog to register.
-        config (dict): Configuration dictionary containing database connection details.
+        cog_instance (commands.Cog | Path): The instance/path of the cog to register.
         tables (list[type[Table]]): List of Piccolo Table classes to associate with the database engine.
-        pool_size (int, optional): Maximum size of the database connection pool. Defaults to 20.
+        config (dict): Configuration dictionary containing database connection details.
         trace (bool, optional): Whether to enable tracing for migrations. Defaults to False.
+        max_size (int, optional): Maximum size of the database connection pool. Defaults to 20.
+        min_size (int, optional): Minimum size of the database connection pool. Defaults to 1.
+        skip_migrations (bool, optional): Whether to skip running migrations. Defaults to False.
+        extensions (list[str], optional): List of Postgres extensions to enable. Defaults to ("uuid-ossp",).
 
     Raises:
         UNCPathError: If the cog path is a UNC path, which is not supported.
@@ -40,8 +48,11 @@ async def register_cog(
     Returns:
         PostgresEngine: The database engine associated with the registered cog.
     """
-    cog_path = _root(cog_instance)
-    if _is_unc_path(cog_path):
+    assert isinstance(cog_instance, (commands.Cog, Path)), (
+        "cog_instance must be a Cog instance or a Path to the cog directory"
+    )
+    cog_path = get_root(cog_instance)
+    if is_unc_path(cog_path):
         raise UNCPathError(
             f"UNC paths are not supported, please move the cog's location: {cog_path}"
         )
@@ -49,50 +60,61 @@ async def register_cog(
         raise DirectoryError(f"Cog files are not in a valid directory: {cog_path}")
 
     if await ensure_database_exists(cog_instance, config):
-        log.info(f"New database created for {cog_instance.qualified_name}")
+        log.info(f"New database created for {cog_path.stem}")
 
-    log.info("Running migrations, if any")
-    result = await run_migrations(cog_instance, config, trace)
-    if "No migrations need to be run" in result:
-        log.info("No migrations needed!")
-    else:
-        log.info(f"Migration result...\n{result}")
+    if not skip_migrations:
+        log.info("Running migrations, if any")
+        result = await run_migrations(cog_instance, config, trace)
+        if "No migrations need to be run" in result:
+            log.info("No migrations needed ✓")
+        else:
+            log.info(f"Migration result...\n{result}")
+            if "Traceback" in result:
+                diagnoses = await diagnose_issues(cog_instance, config)
+                log.error(diagnoses + "\nOne or more migrations failed to run!")
 
     temp_config = config.copy()
-    temp_config["database"] = _db_name(cog_instance)
+    temp_config["database"] = db_name(cog_instance)
     log.debug("Fetching database engine")
-    engine = await _acquire_db_engine(temp_config)
+    engine = await acquire_db_engine(temp_config, extensions)
     log.debug("Database engine acquired, starting pool")
-    await engine.start_connection_pool(max_size=pool_size)
-    log.info("Database connection pool started!")
+    await engine.start_connection_pool(min_size=min_size, max_size=max_size)
+    log.info("Database connection pool started ✓")
     for table_class in tables:
         table_class._meta.db = engine
     return engine
 
 
 async def run_migrations(
-    cog_instance: Cog | Path,
+    cog_instance: commands.Cog | Path,
     config: dict,
     trace: bool = False,
 ) -> str:
     """Runs database migrations for a given Discord cog.
 
     Args:
-        cog_instance (Cog | Path): The instance of the cog for which to run migrations.
-        config (dict): Configuration dictionary containing database connection details.
+        cog_instance (commands.Cog | Path): The instance of the cog for which to run migrations.
+        config (dict): Database connection details.
         trace (bool, optional): Whether to enable tracing for migrations. Defaults to False.
 
     Returns:
         str: The result of the migration process, including any output messages.
     """
-    commands = [str(piccolo_path), "migrations", "forwards", _root(cog_instance).stem]
+    temp_config = config.copy()
+    temp_config["database"] = db_name(cog_instance)
+    commands = [
+        str(find_piccolo_executable()),
+        "migrations",
+        "forwards",
+        get_root(cog_instance).stem,
+    ]
     if trace:
         commands.append("--trace")
-    return await _shell(cog_instance, config, commands, False)
+    return await run_shell(cog_instance, commands, False, temp_config)
 
 
 async def reverse_migration(
-    cog_instance: Cog | Path,
+    cog_instance: commands.Cog | Path,
     config: dict,
     timestamp: str,
     trace: bool = False,
@@ -100,7 +122,7 @@ async def reverse_migration(
     """Reverses a database migration for a given Discord cog to a specific timestamp.
 
     Args:
-        cog_instance (Cog | Path): The instance of the cog for which to reverse the migration.
+        cog_instance (commands.Cog | Path): The instance of the cog for which to reverse the migration.
         config (dict): Configuration dictionary containing database connection details.
         timestamp (str): The timestamp to which the migration should be reversed.
         trace (bool, optional): Whether to enable tracing for migrations. Defaults to False.
@@ -108,174 +130,231 @@ async def reverse_migration(
     Returns:
         str: The result of the reverse migration process, including any output messages.
     """
+    temp_config = config.copy()
+    temp_config["database"] = db_name(cog_instance)
     commands = [
-        str(piccolo_path),
+        str(find_piccolo_executable()),
         "migrations",
         "backwards",
-        _root(cog_instance).stem,
+        get_root(cog_instance).stem,
         timestamp,
     ]
     if trace:
         commands.append("--trace")
-
-    return await _shell(cog_instance, config, commands, False)
+    return await run_shell(cog_instance, commands, False, temp_config)
 
 
 async def create_migrations(
-    cog_instance: Cog | Path,
+    cog_instance: commands.Cog | Path,
     config: dict,
     trace: bool = False,
     description: str = None,
 ) -> str:
-    """Creates new database migrations for a given Discord cog.
+    """Creates new database migrations for the cog
 
     THIS SHOULD BE RUN MANUALLY!
 
     Args:
-        cog_instance (Cog | Path | str): The instance of the cog for which to create migrations.
+        cog_instance (commands.Cog | Path): The instance of the cog for which to create migrations.
         config (dict): Configuration dictionary containing database connection details.
         trace (bool, optional): Whether to enable tracing for migrations. Defaults to False.
-        description (str, optional): Description for the migration. Defaults to None.
+        description (str, optional): Description of the migration. Defaults to None.
 
     Returns:
         str: The result of the migration creation process, including any output messages.
     """
+    temp_config = config.copy()
+    temp_config["database"] = db_name(cog_instance)
     commands = [
-        str(piccolo_path),
+        str(find_piccolo_executable()),
         "migrations",
         "new",
-        _root(cog_instance).stem,
+        get_root(cog_instance).stem,
         "--auto",
     ]
     if trace:
         commands.append("--trace")
     if description is not None:
-        commands.append(f'--desc="{description}"')
+        commands.append(f"--desc={description}")
+    return await run_shell(cog_instance, commands, True, temp_config)
 
-    return await _shell(cog_instance, config, commands, True)
 
-
-async def diagnose_issues(cog_instance: Cog | Path, config: dict) -> str:
+async def diagnose_issues(cog_instance: commands.Cog | Path, config: dict) -> str:
     """Diagnoses potential issues with the database setup for a given Discord cog.
 
     Args:
-        cog_instance (Cog | Path): The instance of the cog for which to diagnose issues.
+        cog_instance (commands.Cog | Path): The instance of the cog to diagnose.
         config (dict): Configuration dictionary containing database connection details.
 
     Returns:
-        str: A report of the diagnosis and migration check results.
+        str: The result of the diagnosis process, including any output messages.
     """
-    diagnoses = await _shell(
-        cog_instance, config, [str(piccolo_path), "--diagnose"], False
+    piccolo_path = find_piccolo_executable()
+    temp_config = config.copy()
+    temp_config["database"] = db_name(cog_instance)
+    diagnoses = await run_shell(
+        cog_instance,
+        [str(piccolo_path), "--diagnose"],
+        False,
+        temp_config,
     )
-    check = await _shell(
-        cog_instance, config, [str(piccolo_path), "migrations", "check"], False
+    check = await run_shell(
+        cog_instance,
+        [str(piccolo_path), "migrations", "check"],
+        False,
+        temp_config,
     )
     return f"{diagnoses}\n{check}"
 
 
-async def ensure_database_exists(cog_instance: Cog | Path, config: dict) -> bool:
+async def ensure_database_exists(
+    cog_instance: commands.Cog | Path,
+    config: dict[str, t.Any],
+) -> bool:
     """Create a database for the cog if it doesn't exist.
 
     Args:
-        cog_instance (Cog | Path): The cog instance
+        cog_instance (commands.Cog | Path): The cog instance
         config (dict): the database connection information
 
     Returns:
         bool: True if a new database was created
     """
-    conn = await asyncpg.connect(**config, timeout=10)
-    database_name = _db_name(cog_instance)
+    tmp_config = config.copy()
+    tmp_config["timeout"] = 10
+    conn = await asyncpg.connect(**tmp_config)
+    database_name = db_name(cog_instance)
     try:
         databases = await conn.fetch("SELECT datname FROM pg_database;")
         if database_name not in [db["datname"] for db in databases]:
-            await conn.execute(f"CREATE DATABASE {database_name};")
+            escaped_name = '"' + database_name.replace('"', '""') + '"'
+            await conn.execute(f"CREATE DATABASE {escaped_name};")
             return True
     finally:
         await conn.close()
     return False
 
 
-async def _acquire_db_engine(config: dict) -> PostgresEngine:
+async def acquire_db_engine(config: dict, extensions: list[str]) -> PostgresEngine:
     """Acquire a database engine
     The PostgresEngine constructor is blocking and must be run in a separate thread.
 
     Args:
         config (dict): The database connection information
+        extensions (list[str]): The Postgres extensions to enable
 
     Returns:
         PostgresEngine: The database engine
     """
 
-    def _acquire(config: dict) -> PostgresEngine:
-        return PostgresEngine(config=config)
+    async def get_conn():
+        return await asyncio.to_thread(
+            PostgresEngine,
+            config=config,
+            extensions=extensions,
+        )
 
     try:
-        async with asyncio.timeout(10):
-            engine = await asyncio.to_thread(_acquire, config)
-            return engine
+        return await asyncio.wait_for(get_conn(), timeout=10)
     except asyncio.TimeoutError:
-        raise ConnectionTimeoutError("Database took longer than 10 seconds to connect!")
+        raise ConnectionTimeoutError("Database connection timed out")
 
 
-async def _shell(
-    cog_instance: Cog | Path,
-    config: dict,
-    commands: list[str],
-    is_shell: bool,
-) -> str:
-    """Run a shell command in a separate thread"""
+def db_name(cog_instance: commands.Cog | Path) -> str:
+    """Get the name of the database for the cog
 
-    def _exe() -> str:
-        temp_config = config.copy()
-        temp_config["database"] = _db_name(cog_instance)
-        res = subprocess.run(
-            commands,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=is_shell,
-            cwd=str(_root(cog_instance)),
-            env=_get_env(cog_instance, temp_config),
-        )
-        return res.stdout.decode(encoding="utf-8", errors="ignore").replace("👍", "!")
+    Args:
+        cog_instance (commands.Cog | Path): The cog instance
 
-    return await asyncio.to_thread(_exe)
+    Returns:
+        str: The database name
+    """
+    if isinstance(cog_instance, Path):
+        return cog_instance.stem.lower()
+    return cog_instance.qualified_name.lower()
 
 
-def _root(cog_instance: Cog | Path) -> Path:
+def get_root(cog_instance: commands.Cog | Path) -> Path:
     """Get the root path of the cog"""
     if isinstance(cog_instance, Path):
         return cog_instance
     return Path(inspect.getfile(cog_instance.__class__)).parent
 
 
-def _get_env(cog_instance: Cog | Path, config: dict) -> dict:
-    """Create mock environment for subprocess"""
-    env = os.environ.copy()
-    env["PICCOLO_CONF"] = "db.piccolo_conf"
-    env["APP_NAME"] = _root(cog_instance).stem
-    env["POSTGRES_HOST"] = config.get("host")
-    env["POSTGRES_PORT"] = config.get("port")
-    env["POSTGRES_USER"] = config.get("user")
-    env["POSTGRES_PASSWORD"] = config.get("password")
-    env["POSTGRES_DATABASE"] = config.get("database")
-    if _is_windows():
-        env["PYTHONIOENCODING"] = "utf-8"
-    return env
-
-
-def _db_name(cog_instance: Cog | Path) -> str:
-    """Get the name of the database for the cog"""
-    if isinstance(cog_instance, Path):
-        return cog_instance.stem.lower()
-    return cog_instance.qualified_name.lower()
-
-
-def _is_unc_path(path: Path) -> bool:
+def is_unc_path(path: Path) -> bool:
     """Check if path is a UNC path"""
     return path.is_absolute() and str(path).startswith(r"\\\\")
 
 
-def _is_windows() -> bool:
-    """Check if the OS is Windows"""
-    return os.name == "nt"
+def find_piccolo_executable() -> Path:
+    """Find the piccolo executable in the system's PATH."""
+    for path in os.environ["PATH"].split(os.pathsep):
+        for executable_name in ["piccolo", "piccolo.exe"]:
+            executable = Path(path) / executable_name
+            if executable.exists():
+                return executable
+
+    # Fetch the lib path from downloader
+    lib_path = cog_data_path(raw_name="Downloader") / "lib"
+    if lib_path.exists():
+        for folder in lib_path.iterdir():
+            for executable_name in ["piccolo", "piccolo.exe"]:
+                executable = folder / executable_name
+                if executable.exists():
+                    return executable
+
+    # Check if lib was installed manually in the venv
+    default_path = Path(sys.executable).parent / "piccolo"
+    if default_path.exists():
+        return default_path
+
+    raise FileNotFoundError("Piccolo package not found!")
+
+
+def get_env(
+    cog_instance: commands.Cog | Path,
+    postgres_config: dict[str, t.Any] | None = None,
+) -> dict[str, t.Any]:
+    """Create mock environment for subprocess"""
+    env = os.environ.copy()
+    if "PICCOLO_CONF" not in env:
+        # Dont want to overwrite the user's config
+        env["PICCOLO_CONF"] = "db.piccolo_conf"
+    env["APP_NAME"] = get_root(cog_instance).stem
+    if isinstance(cog_instance, Path):
+        env["DB_PATH"] = str(cog_instance / "db.sqlite")
+    else:
+        env["DB_PATH"] = str(cog_data_path(cog_instance) / "db.sqlite")
+    if os.name == "nt":  # Windows
+        env["PYTHONIOENCODING"] = "utf-8"
+    if postgres_config is not None:
+        env["POSTGRES_USER"] = postgres_config.get("user", "postgres")
+        env["POSTGRES_PASSWORD"] = postgres_config.get("password", "postgres")
+        env["POSTGRES_DATABASE"] = postgres_config.get("database", "postgres")
+        env["POSTGRES_HOST"] = postgres_config.get("host", "localhost")
+        env["POSTGRES_PORT"] = postgres_config.get("port", "5432")
+    return env
+
+
+async def run_shell(
+    cog_instance: commands.Cog | Path,
+    commands: list[str],
+    is_shell: bool,
+    postgres_config: dict = None,
+) -> str:
+    """Run a shell command in a separate thread"""
+
+    def _exe() -> str:
+        res = subprocess.run(
+            commands,
+            stdout=sys.stdout if is_shell else subprocess.PIPE,
+            stderr=sys.stdout if is_shell else subprocess.PIPE,
+            shell=is_shell,
+            cwd=str(get_root(cog_instance)),
+            env=get_env(cog_instance, postgres_config),
+        )
+        if not res.stdout:
+            return ""
+        return res.stdout.decode(encoding="utf-8", errors="ignore").replace("👍", "!")
+
+    return await asyncio.to_thread(_exe)

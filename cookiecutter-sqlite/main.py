@@ -15,7 +15,7 @@ from .engine import engine
 from .listeners import Listeners
 from .tasks import TaskLoops
 
-log = logging.getLogger("red.cookiecutter")
+log = logging.getLogger("red.your_cog_name.cookiecutter")
 RequestType = t.Literal["discord_deleted_user", "owner", "user", "user_strict"]
 
 
@@ -28,8 +28,8 @@ class CookieCutter(
 ):
     """Description"""
 
-    __author__ = "author name"
-    __version__ = "0.0.1b"
+    __author__ = "[Author Name]"
+    __version__ = "0.0.1"
 
     def __init__(self, bot: Red):
         super().__init__()
@@ -41,14 +41,18 @@ class CookieCutter(
         txt = "Version: {}\nAuthor: {}".format(self.__version__, self.__author__)
         return f"{helpcmd}\n\n{txt}"
 
-    async def red_get_data_for_user(self, *, user_id: int) -> t.MutableMapping[str, BytesIO]:
-        users = await Player.select(Player.all_columns()).where(Player.author_id == user_id)
+    async def red_get_data_for_user(
+        self, *, user_id: int
+    ) -> t.MutableMapping[str, BytesIO]:
+        users = await Player.select(Player.all_columns()).where(
+            Player.user_id == user_id
+        )
         return {"data.json": BytesIO(json.dumps(users).encode())}
 
     async def red_delete_data_for_user(self, *, requester: RequestType, user_id: int):
         if not self.db:
             return "Data not deleted, database connection is not active"
-        await Player.delete().where(Player.author_id == user_id)
+        await Player.delete().where(Player.user_id == user_id)
         return f"Data for user ID {user_id} has been deleted"
 
     async def cog_load(self) -> None:

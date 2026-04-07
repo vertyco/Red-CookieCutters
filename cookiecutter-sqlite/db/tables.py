@@ -4,7 +4,7 @@ from piccolo.columns import BigInt, Serial, Timestamptz
 from piccolo.columns.defaults.timestamptz import TimestamptzNow
 from piccolo.table import Table, sort_table_classes
 
-log = logging.getLogger("red.cookiecutter")
+log = logging.getLogger("red.your_cog_name.cookiecutter")
 
 
 class Player(Table):

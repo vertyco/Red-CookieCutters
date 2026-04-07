@@ -122,7 +122,7 @@ class DynamicMenu(discord.ui.View):
         row=1,
     )
     async def left10(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.pages -= 10
+        self.page -= 10
         await self.refresh(interaction)
 
     @discord.ui.button(

@@ -1,13 +1,12 @@
 import discord
+from pydantic import BaseModel
 
-from . import Base
 
-
-class GuildSettings(Base):
+class GuildSettings(BaseModel):
     pass
 
 
-class DB(Base):
+class DB(BaseModel):
     configs: dict[int, GuildSettings] = {}
 
     def get_conf(self, guild: discord.Guild | int) -> GuildSettings:

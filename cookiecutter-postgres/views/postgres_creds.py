@@ -49,7 +49,9 @@ class ConfigModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         if not self.port.value.isdigit():
-            return await interaction.response.send_message("Port must be a number", ephemeral=True)
+            return await interaction.response.send_message(
+                "Port must be a number", ephemeral=True
+            )
         await interaction.response.defer()
         self.data = {
             "host": self.host.value,
@@ -67,13 +69,15 @@ class SetConnectionView(discord.ui.View):
         self.cog = cog
         self.ctx = ctx
 
-        self.message: discord.Message = None
+        self.message: discord.Message | None = None
 
         self.data = None
 
     async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user.id != self.ctx.author.id:
-            await interaction.response.send_message("This isn't your menu!", ephemeral=True)
+            await interaction.response.send_message(
+                "This isn't your menu!", ephemeral=True
+            )
             return False
         return True
 
@@ -87,7 +91,9 @@ class SetConnectionView(discord.ui.View):
         self.message = await self.ctx.send(txt, view=self)
 
     @discord.ui.button(label="Configure", style=discord.ButtonStyle.primary)
-    async def configure(self, interaction: discord.Interaction, buttons: discord.ui.Button):
+    async def configure(
+        self, interaction: discord.Interaction, buttons: discord.ui.Button
+    ):
         current = await self.cog.bot.get_shared_api_tokens("postgres")
         modal = ConfigModal(self.data or current)
         await interaction.response.send_modal(modal)
@@ -106,6 +112,7 @@ class SetConnectionView(discord.ui.View):
                     await interaction.channel.send(txt, delete_after=10)
 
         await interaction.edit_original_response(content="Testing connection...")
+        conn = None
         try:
             conn = await asyncpg.connect(**modal.data, timeout=5)
         except asyncpg.InvalidPasswordError:
@@ -114,8 +121,13 @@ class SetConnectionView(discord.ui.View):
             return await _respond("Invalid database name!")
         except asyncpg.InvalidAuthorizationSpecificationError:
             return await _respond("Invalid user!")
+        except Exception:
+            return await _respond("Failed to connect to the database!")
         finally:
-            await conn.close()
+            if conn:
+                await conn.close()
 
         await self.cog.bot.set_shared_api_tokens("postgres", **modal.data)
-        await interaction.edit_original_response(content="Postgres connection info set", view=None)
+        await interaction.edit_original_response(
+            content="Postgres connection info set", view=None
+        )

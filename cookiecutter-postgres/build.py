@@ -22,11 +22,15 @@ root = Path(__file__).parent
 
 
 async def main():
-    created = await engine.ensure_database_exists(root, config)
-    print(f"Database created: {created}")
-    desc = input("Enter a description for the migration: ")
-    print(await engine.create_migrations(root, config, True, desc.replace('"', "")))
-    print(await engine.run_migrations(root, config, True))
+    try:
+        desc = input("Enter a description for the migration: ")
+        res = await engine.create_migrations(root, config, description=desc)
+        if "The command failed." in res:
+            raise Exception(res)
+        print(res)
+    except Exception as e:
+        print(f"Error: {e}")
+        print(await engine.diagnose_issues(root))
 
 
 if __name__ == "__main__":

@@ -13,11 +13,12 @@ from redbot.core.data_manager import cog_data_path
 
 from .errors import DirectoryError, UNCPathError
 
-log = logging.getLogger("red.vrt.appeals")
-piccolo_path = Path(sys.executable).parent / "piccolo"
+log = logging.getLogger("red.your_cog_name.cookiecutter")
 
 
-async def register_cog(cog_instance: commands.Cog, tables: list[type[Table]], trace: bool = False) -> SQLiteEngine:
+async def register_cog(
+    cog_instance: commands.Cog, tables: list[type[Table]], trace: bool = False
+) -> SQLiteEngine:
     """Registers a Discord cog with a database connection and runs migrations.
 
     Args:
@@ -33,10 +34,14 @@ async def register_cog(cog_instance: commands.Cog, tables: list[type[Table]], tr
         SQLiteEngine: The database engine associated with the registered cog.
     """
     if not isinstance(cog_instance, commands.Cog):
-        raise TypeError("cog_instance must be a class or subclass of discord.ext.commands.Cog")
+        raise TypeError(
+            "cog_instance must be a class or subclass of discord.ext.commands.Cog"
+        )
     save_path = cog_data_path(cog_instance)
-    if _is_unc_path(save_path):
-        raise UNCPathError(f"UNC paths are not supported, please move the cog's location: {save_path}")
+    if is_unc_path(save_path):
+        raise UNCPathError(
+            f"UNC paths are not supported, please move the cog's location: {save_path}"
+        )
     if not save_path.is_dir():
         raise DirectoryError(f"Cog files are not in a valid directory: {save_path}")
 
@@ -63,13 +68,20 @@ async def run_migrations(cog_instance: commands.Cog, trace: bool = False) -> str
     Returns:
         str: The result of the migration process, including any output messages.
     """
-    commands = [str(piccolo_path), "migrations", "forwards", _root(cog_instance).stem]
+    cmds = [
+        str(find_piccolo_executable()),
+        "migrations",
+        "forwards",
+        get_root(cog_instance).stem,
+    ]
     if trace:
-        commands.append("--trace")
-    return await _shell(cog_instance, commands, False)
+        cmds.append("--trace")
+    return await run_shell(cog_instance, cmds, False)
 
 
-async def reverse_migration(cog_instance: commands.Cog, timestamp: str, trace: bool = False) -> str:
+async def reverse_migration(
+    cog_instance: commands.Cog, timestamp: str, trace: bool = False
+) -> str:
     """Reverses database migrations for the cog
 
     Args:
@@ -80,30 +92,45 @@ async def reverse_migration(cog_instance: commands.Cog, timestamp: str, trace: b
     Returns:
         str: The result of the migration process, including any output messages.
     """
-    commands = [str(piccolo_path), "migrations", "backwards", _root(cog_instance).stem, timestamp]
+    cmds = [
+        str(find_piccolo_executable()),
+        "migrations",
+        "backwards",
+        get_root(cog_instance).stem,
+        timestamp,
+    ]
     if trace:
-        commands.append("--trace")
-    return await _shell(cog_instance, commands, False)
+        cmds.append("--trace")
+    return await run_shell(cog_instance, cmds, False)
 
 
-async def create_migrations(cog_instance: commands.Cog | Path, trace: bool = False, description: str = None) -> str:
+async def create_migrations(
+    cog_instance: commands.Cog | Path, trace: bool = False, description: str = None
+) -> str:
     """Creates new database migrations for the cog
 
     THIS SHOULD BE RUN MANUALLY!
 
     Args:
         cog_instance (Cog | Path): The instance of the cog to create migrations for.
-        name (str): The name of the migration to create.
+        trace (bool, optional): Whether to enable tracing for migrations. Defaults to False.
+        description (str, optional): Description of the migration. Defaults to None.
 
     Returns:
         str: The result of the migration process, including any output messages.
     """
-    commands = [str(piccolo_path), "migrations", "new", _root(cog_instance).stem, "--auto"]
+    cmds = [
+        str(find_piccolo_executable()),
+        "migrations",
+        "new",
+        get_root(cog_instance).stem,
+        "--auto",
+    ]
     if trace:
-        commands.append("--trace")
+        cmds.append("--trace")
     if description is not None:
-        commands.append(f"--desc={description}")
-    return await _shell(cog_instance, commands, False)
+        cmds.append(f"--desc={description}")
+    return await run_shell(cog_instance, cmds, False)
 
 
 async def diagnose_issues(cog_instance: commands.Cog | Path) -> str:
@@ -115,54 +142,78 @@ async def diagnose_issues(cog_instance: commands.Cog | Path) -> str:
     Returns:
         str: The result of the diagnosis process, including any output messages.
     """
-    diagnoses = await _shell(cog_instance, [str(piccolo_path), "--diagnose"], False)
-    check = await _shell(cog_instance, [str(piccolo_path), "migrations", "check"], False)
+    piccolo_path = find_piccolo_executable()
+    diagnoses = await run_shell(cog_instance, [str(piccolo_path), "--diagnose"], False)
+    check = await run_shell(
+        cog_instance, [str(piccolo_path), "migrations", "check"], False
+    )
     return f"{diagnoses}\n{check}"
 
 
-async def _shell(cog_instance: commands.Cog | Path, commands: list[str], is_shell: bool) -> str:
+async def run_shell(
+    cog_instance: commands.Cog | Path, cmds: list[str], is_shell: bool
+) -> str:
     """Run a shell command in a separate thread"""
 
     def _exe() -> str:
         res = subprocess.run(
-            commands,
+            cmds,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=is_shell,
-            cwd=str(_root(cog_instance)),
-            env=_get_env(cog_instance),
+            cwd=str(get_root(cog_instance)),
+            env=get_env(cog_instance),
         )
         return res.stdout.decode(encoding="utf-8", errors="ignore").replace("👍", "!")
 
     return await asyncio.to_thread(_exe)
 
 
-def _root(cog_instance: commands.Cog | Path) -> Path:
+def get_root(cog_instance: commands.Cog | Path) -> Path:
     """Get the root path of the cog"""
     if isinstance(cog_instance, Path):
         return cog_instance
     return Path(inspect.getfile(cog_instance.__class__)).parent
 
 
-def _get_env(cog_instance: commands.Cog | Path) -> dict:
+def get_env(cog_instance: commands.Cog | Path) -> dict:
     """Create mock environment for subprocess"""
     env = os.environ.copy()
-    env["PICCOLO_CONF"] = "db.piccolo_conf"
-    env["APP_NAME"] = _root(cog_instance).stem
+    if "PICCOLO_CONF" not in env:
+        env["PICCOLO_CONF"] = "db.piccolo_conf"
+    env["APP_NAME"] = get_root(cog_instance).stem
     if isinstance(cog_instance, Path):
         env["DB_PATH"] = str(cog_instance / "db.sqlite")
     else:
         env["DB_PATH"] = str(cog_data_path(cog_instance) / "db.sqlite")
-    if _is_windows():
+    if os.name == "nt":
         env["PYTHONIOENCODING"] = "utf-8"
     return env
 
 
-def _is_unc_path(path: Path) -> bool:
+def find_piccolo_executable() -> Path:
+    """Find the piccolo executable in the system's PATH."""
+    for path in os.environ["PATH"].split(os.pathsep):
+        for executable_name in ["piccolo", "piccolo.exe"]:
+            executable = Path(path) / executable_name
+            if executable.exists():
+                return executable
+
+    lib_path = cog_data_path(raw_name="Downloader") / "lib"
+    if lib_path.exists():
+        for folder in lib_path.iterdir():
+            for executable_name in ["piccolo", "piccolo.exe"]:
+                executable = folder / executable_name
+                if executable.exists():
+                    return executable
+
+    default_path = Path(sys.executable).parent / "piccolo"
+    if default_path.exists():
+        return default_path
+
+    raise FileNotFoundError("Piccolo package not found!")
+
+
+def is_unc_path(path: Path) -> bool:
     """Check if path is a UNC path"""
     return path.is_absolute() and str(path).startswith(r"\\\\")
-
-
-def _is_windows() -> bool:
-    """Check if the OS is Windows"""
-    return os.name == "nt"
